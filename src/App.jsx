@@ -7,7 +7,8 @@ import {
   signInWithCustomToken,
   GoogleAuthProvider,
   linkWithPopup,
-  signInWithPopup
+  signInWithPopup,
+  signOut
 } from 'firebase/auth';
 import { 
   getFirestore, 
@@ -58,8 +59,11 @@ import {
   Book,
   Grid,
   Upload,
-  ExternalLink
+  ExternalLink,
+  Printer,
+  LogOut
 } from 'lucide-react';
+import LandingPage from './components/LandingPage';
 
 // --- Configuration ---
 const firebaseConfig = {
@@ -132,6 +136,128 @@ const ModalWrapper = ({ isOpen, onClose, title, children, maxWidth = 'max-w-xl' 
         {children}
       </div>
     </div>
+  );
+};
+
+// --- Reports Modal ---
+const ReportsModal = ({ isOpen, onClose, students, assignments, activeStudentId }) => {
+  const [selectedStudentId, setSelectedStudentId] = useState(activeStudentId);
+  const printRef = useRef();
+
+  useEffect(() => {
+    if (isOpen && activeStudentId) {
+      setSelectedStudentId(activeStudentId);
+    }
+  }, [isOpen, activeStudentId]);
+
+  const completedTasks = useMemo(() => {
+    return assignments
+      .filter(t => t.studentId === selectedStudentId && t.status === 'completed')
+      .sort((a, b) => {
+        const dateA = a.completedAt?.seconds || 0;
+        const dateB = b.completedAt?.seconds || 0;
+        return dateB - dateA; // Descending
+      });
+  }, [assignments, selectedStudentId]);
+
+  const handlePrint = () => {
+    const content = printRef.current;
+    const printWindow = window.open('', '', 'height=600,width=800');
+    
+    printWindow.document.write('<html><head><title>Portfolio Report</title>');
+    printWindow.document.write(`
+      <style>
+        body { font-family: 'Crimson Text', serif; padding: 40px; color: #2F3E32; }
+        h1 { font-size: 24px; margin-bottom: 10px; border-bottom: 2px solid #E8E4D9; padding-bottom: 10px; }
+        h2 { font-size: 18px; margin-top: 20px; color: #5F6F52; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { text-align: left; padding: 8px; border-bottom: 1px solid #E8E4D9; }
+        th { font-weight: bold; color: #5F6F52; }
+        .meta { color: #666; font-size: 14px; margin-bottom: 30px; }
+      </style>
+    `);
+    printWindow.document.write('</head><body>');
+    printWindow.document.write(content.innerHTML);
+    printWindow.document.write('</body></html>');
+    
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+    printWindow.close();
+  };
+
+  if (!isOpen) return null;
+
+  const student = students.find(s => s.id === selectedStudentId);
+
+  return (
+    <ModalWrapper isOpen={isOpen} onClose={onClose} title="Student Portfolio" maxWidth="max-w-4xl">
+      <div className="flex flex-col h-[70vh]">
+        <div className="flex justify-between items-center mb-6">
+          <div className="flex items-center gap-4">
+            <select 
+              value={selectedStudentId} 
+              onChange={(e) => setSelectedStudentId(e.target.value)}
+              className="p-2 border border-[#E8E4D9] rounded-lg font-serif text-[#2F3E32]"
+            >
+              {students.map(s => (
+                <option key={s.id} value={s.id}>{s.display_name}</option>
+              ))}
+            </select>
+            <span className="text-stone-500 text-sm">{completedTasks.length} completed tasks</span>
+          </div>
+          <button 
+            onClick={handlePrint}
+            className="flex items-center gap-2 px-4 py-2 bg-[#2F3E32] text-[#F9F7F2] rounded-lg hover:bg-[#1A231C] transition-colors"
+          >
+            <Printer size={16} />
+            Print Report
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto bg-white border border-[#E8E4D9] rounded-xl p-8 shadow-sm" >
+          <div ref={printRef}>
+            <h1 className="text-3xl font-serif font-bold text-[#2F3E32] mb-2">
+              {student?.display_name}'s Portfolio
+            </h1>
+            <p className="text-stone-500 italic mb-8">
+              Generated on {new Date().toLocaleDateString()}
+            </p>
+
+            {completedTasks.length === 0 ? (
+              <p className="text-stone-500 text-center py-10">No completed tasks found for this student.</p>
+            ) : (
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="border-b-2 border-[#E8E4D9]">
+                    <th className="py-2 font-serif text-[#5F6F52]">Date Completed</th>
+                    <th className="py-2 font-serif text-[#5F6F52]">Subject</th>
+                    <th className="py-2 font-serif text-[#2F3E32]">Activity / Book</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {completedTasks.map(task => {
+                    let dateStr = "—";
+                    if (task.completedAt) {
+                      // Handle Firestore Timestamp
+                      const date = task.completedAt.toDate ? task.completedAt.toDate() : new Date(task.completedAt);
+                      dateStr = date.toLocaleDateString();
+                    }
+                    return (
+                      <tr key={task.id} className="border-b border-[#E8E4D9]/50">
+                        <td className="py-3 text-stone-500 text-sm font-mono">{dateStr}</td>
+                        <td className="py-3 font-bold text-[#A9B388] text-xs uppercase tracking-widest">{task.subject}</td>
+                        <td className="py-3 font-serif text-[#2F3E32]">{task.title}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      </div>
+    </ModalWrapper>
   );
 };
 
@@ -324,11 +450,11 @@ const generatePortfolioSummary = async (studentName, completedTasks) => {
   if (!completedTasks.length) return "No tasks completed yet.";
   
   const prompt = `
-    Act as a professional Charlotte Mason homeschool evaluator. 
+    Act as a warm and observant homeschool educator.
     Write a 2-sentence narrative progress summary for a student named ${studentName}.
-    They have completed the following living books and tasks: ${completedTasks.map(t => t.title).join(', ')}.
-    Focus on: richness of ideas, habit formation, and engagement.
-    Tone: Gentle, observant, and academic.
+    They have completed the following books and tasks: ${completedTasks.map(t => t.title).join(', ')}.
+    Focus on: curiosity, habit formation, and engagement with learning.
+    Tone: Gentle, encouraging, and thoughtful.
   `;
 
   try {
@@ -686,28 +812,51 @@ const SickDayModal = ({ isOpen, onClose, onConfirm }) => {
   );
 };
 
-const AddTaskModal = ({ isOpen, onClose, studentId, onAdd }) => {
+const TaskModal = ({ isOpen, onClose, studentId, onAdd, onEdit, taskToEdit }) => {
   const [title, setTitle] = useState('');
   const [subject, setSubject] = useState('Math');
   const [duration, setDuration] = useState('20');
   const [type, setType] = useState('Lesson');
-  const [dueDate, setDueDate] = useState(''); // New State
+  const [dueDate, setDueDate] = useState('');
+
+  useEffect(() => {
+    if (isOpen) {
+      if (taskToEdit) {
+        setTitle(taskToEdit.title);
+        setSubject(taskToEdit.subject);
+        setDuration(taskToEdit.duration);
+        setType(taskToEdit.type || 'Lesson');
+        setDueDate(taskToEdit.dueDate || '');
+      } else {
+        setTitle('');
+        setSubject('Math');
+        setDuration('20');
+        setType('Lesson');
+        setDueDate('');
+      }
+    }
+  }, [isOpen, taskToEdit]);
 
   if (!isOpen) return null;
 
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!title.trim()) return;
-    onAdd({ 
+    
+    const taskData = { 
       title, 
       subject, 
       type, 
       duration, 
       studentId, 
-      dueDate: dueDate || null // Include due date
-    });
-    setTitle('');
-    setDueDate('');
+      dueDate: dueDate || null 
+    };
+
+    if (taskToEdit) {
+      onEdit(taskToEdit.id, taskData);
+    } else {
+      onAdd(taskData);
+    }
     onClose();
   };
 
@@ -717,7 +866,7 @@ const AddTaskModal = ({ isOpen, onClose, studentId, onAdd }) => {
         <div className="flex justify-between items-center mb-6">
           <h3 className="text-xl font-serif text-[#2F3E32] flex items-center gap-2">
             <Feather size={18} />
-            New Entry
+            {taskToEdit ? 'Edit Entry' : 'New Entry'}
           </h3>
           <button onClick={onClose} className="p-1 hover:bg-[#E8E4D9] rounded-full">
             <X size={20} className="text-stone-400" />
@@ -730,7 +879,7 @@ const AddTaskModal = ({ isOpen, onClose, studentId, onAdd }) => {
               type="text" 
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g., Nature Walk, Copywork, Ambleside Year 1..."
+              placeholder="e.g., Nature Walk, Copywork, Math Lesson..."
               className="w-full p-3 bg-white border border-[#E8E4D9] rounded-xl focus:outline-none focus:ring-2 focus:ring-[#A9B388]/50 focus:border-[#A9B388] transition-all font-serif"
               autoFocus
             />
@@ -798,7 +947,7 @@ const AddTaskModal = ({ isOpen, onClose, studentId, onAdd }) => {
             type="submit"
             className="w-full py-4 mt-4 bg-[#2F3E32] text-[#F9F7F2] font-medium rounded-xl hover:bg-[#1A231C] active:scale-[0.98] transition-all font-serif shadow-lg shadow-[#2F3E32]/20"
           >
-            Add to Bank
+            {taskToEdit ? 'Update Entry' : 'Add to Bank'}
           </button>
         </form>
       </div>
@@ -808,7 +957,7 @@ const AddTaskModal = ({ isOpen, onClose, studentId, onAdd }) => {
 
 
 // --- Calendar View Component (Updated) ---
-const CalendarView = ({ tasks, activeStudentId }) => {
+const CalendarView = ({ tasks, activeStudentId, onEdit, onDelete }) => {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [isDayModalOpen, setIsDayModalOpen] = useState(false);
   
@@ -951,12 +1100,28 @@ const CalendarView = ({ tasks, activeStudentId }) => {
         ) : (
           <div className="space-y-3">
             {filteredTasksByDate.map(task => (
-              <div key={task.id} className="p-3 bg-white border border-[#E8E4D9] rounded-xl shadow-sm flex justify-between items-center">
+              <div key={task.id} className="p-3 bg-white border border-[#E8E4D9] rounded-xl shadow-sm flex justify-between items-center group">
                 <div>
                   <span className="text-[10px] font-bold text-[#A9B388] uppercase tracking-widest">{task.subject}</span>
                   <p className="font-serif text-base text-[#2F3E32]">{task.title}</p>
                 </div>
-                <span className="text-xs text-stone-500">{task.duration}m</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-stone-500">{task.duration}m</span>
+                  <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button 
+                      onClick={() => onEdit(task)}
+                      className="p-1 text-stone-400 hover:text-[#CB8F46] hover:bg-stone-50 rounded-full transition-colors"
+                    >
+                      <Edit size={14} />
+                    </button>
+                    <button 
+                      onClick={() => onDelete(task.id)}
+                      className="p-1 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
               </div>
             ))}
           </div>
@@ -978,12 +1143,28 @@ const CalendarView = ({ tasks, activeStudentId }) => {
         ) : (
           <div className="space-y-3 max-h-[60vh] overflow-y-auto">
             {filteredTasksByDate.map(task => (
-              <div key={task.id} className="p-3 bg-white border border-[#E8E4D9] rounded-xl shadow-sm flex justify-between items-center">
+              <div key={task.id} className="p-3 bg-white border border-[#E8E4D9] rounded-xl shadow-sm flex justify-between items-center group">
                 <div>
                   <span className="text-[10px] font-bold text-[#A9B388] uppercase tracking-widest">{task.subject}</span>
                   <p className="font-serif text-base text-[#2F3E32]">{task.title}</p>
                 </div>
-                <span className="text-xs text-stone-500">{task.duration}m</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-stone-500">{task.duration}m</span>
+                  <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button 
+                      onClick={() => onEdit(task)}
+                      className="p-1 text-stone-400 hover:text-[#CB8F46] hover:bg-stone-50 rounded-full transition-colors"
+                    >
+                      <Edit size={14} />
+                    </button>
+                    <button 
+                      onClick={() => onDelete(task.id)}
+                      className="p-1 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
               </div>
             ))}
           </div>
@@ -997,24 +1178,30 @@ const CalendarView = ({ tasks, activeStudentId }) => {
 // --- Main App Component ---
 
 export default function App() {
+  const [showLanding, setShowLanding] = useState(() => {
+    return localStorage.getItem('kairos_has_started') !== 'true';
+  });
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeStudentId, setActiveStudentId] = useState(null);
   const [students, setStudents] = useState([]);
   const [rhythms, setRhythms] = useState([]);
   const [assignments, setAssignments] = useState([]);
-  const [showAddModal, setShowAddModal] = useState(false);
+  const [showTaskModal, setShowTaskModal] = useState(false);
+  const [editingTask, setEditingTask] = useState(null);
   const [showSickDayModal, setShowSickDayModal] = useState(false);
   const [showStudentModal, setShowStudentModal] = useState(false);
   const [showRhythmsModal, setShowRhythmsModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false); // New State for CSV Import
+  const [showReportsModal, setShowReportsModal] = useState(false); // New State for Reports
   const [aiReport, setAiReport] = useState(null);
   const [generatingReport, setGeneratingReport] = useState(false);
   const [viewMode, setViewMode] = useState('today'); // 'today' | 'bank' | 'calendar'
   
   // New State for Rhythm Filtering
-  const [activeRhythmId, setActiveRhythmId] = useState(null); 
+  const [activeRhythmId, setActiveRhythmId] = useState(null);
   const [isLinking, setIsLinking] = useState(false);
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
 
   const handleGoogleSignIn = async () => {
     if (!user) return;
@@ -1055,19 +1242,20 @@ export default function App() {
 
   // 1. Auth Init
   useEffect(() => {
-    const initAuth = async () => {
-      try {
-        await signInAnonymously(auth);
-      } catch (err) {
-        console.error("Auth failed", err);
-      }
-    };
-    initAuth();
-    
-    return onAuthStateChanged(auth, (u) => {
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u);
-      if (!u) setLoading(false);
+      setLoading(false);
+      
+      // If user has started before but is not logged in, sign in anonymously
+      // This handles page reloads for anonymous users
+      if (!u && localStorage.getItem('kairos_has_started') === 'true') {
+        signInAnonymously(auth).catch(err => {
+          // Only log error if it's not a "multiple auth" race condition
+          console.error("Auto-auth failed", err);
+        });
+      }
     });
+    return unsubscribe;
   }, []);
 
   // 2. Data Listeners (Unchanged)
@@ -1231,6 +1419,25 @@ export default function App() {
     }
   };
 
+  const handleUpdateTask = async (taskId, taskData) => {
+    if (!user) return;
+    const taskRef = doc(getUserCollectionRef('assignments', user.uid), taskId);
+    await updateDoc(taskRef, taskData);
+  };
+
+  const handleDeleteTask = async (taskId) => {
+    if (!user) return;
+    if (window.confirm('Are you sure you want to delete this task?')) {
+      const taskRef = doc(getUserCollectionRef('assignments', user.uid), taskId);
+      await deleteDoc(taskRef);
+    }
+  };
+
+  const handleEditTask = (task) => {
+    setEditingTask(task);
+    setShowTaskModal(true);
+  };
+
   const handleBulkAddAssignments = async (records) => {
     if (!user) return;
     const assignRef = getUserCollectionRef('assignments', user.uid);
@@ -1257,7 +1464,15 @@ export default function App() {
     if (!user) return;
     const newStatus = currentStatus === 'completed' ? 'today' : 'completed';
     const taskRef = doc(getUserCollectionRef('assignments', user.uid), taskId);
-    await updateDoc(taskRef, { status: newStatus });
+    
+    const updateData = { status: newStatus };
+    if (newStatus === 'completed') {
+      updateData.completedAt = serverTimestamp();
+    } else {
+      updateData.completedAt = null;
+    }
+
+    await updateDoc(taskRef, updateData);
   };
 
   const moveFromBankToToday = async (taskId) => {
@@ -1322,7 +1537,36 @@ export default function App() {
     return Math.round((completed / todayUnfiltered.length) * 100);
   }, [allActiveTasks]);
 
+  const handleGetStarted = async () => {
+    localStorage.setItem('kairos_has_started', 'true');
+    setShowLanding(false);
+    if (!user) {
+      try {
+        await signInAnonymously(auth);
+      } catch (err) {
+        console.error("Failed to sign in anonymously", err);
+      }
+    }
+  };
+
+  const handleSignOut = async () => {
+    if (window.confirm("Are you sure you want to sign out?")) {
+      try {
+        await signOut(auth);
+        localStorage.removeItem('kairos_has_started');
+        setShowLanding(true);
+        setStudents([]);
+        setRhythms([]);
+        setAssignments([]);
+        setActiveStudentId(null);
+      } catch (error) {
+        console.error("Error signing out", error);
+      }
+    }
+  };
+
   if (loading) return <LoadingScreen />;
+  if (showLanding) return <LandingPage onGetStarted={handleGetStarted} />;
 
   return (
     <div className="flex h-dvh bg-[#FDFBF7] text-[#2F3E32] font-sans overflow-hidden">
@@ -1401,6 +1645,22 @@ export default function App() {
                 })}
               </div>
             </div>
+
+            {/* Reports Section */}
+            <div>
+              <div className="flex justify-between items-center mb-2 px-2">
+                <h3 className="text-xs font-bold text-[#A9B388] uppercase tracking-widest font-serif">Reports</h3>
+              </div>
+              <button
+                onClick={() => setShowReportsModal(true)}
+                className="w-full flex items-center gap-3 px-3 py-2 text-stone-600 rounded-lg transition-colors hover:bg-[#E8E4D9]/50 font-serif text-sm"
+              >
+                <div className="w-6 h-6 rounded-full flex items-center justify-center bg-stone-100">
+                  <Printer size={14} className="text-[#2F3E32]" />
+                </div>
+                <span>Print Portfolio</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -1417,6 +1677,27 @@ export default function App() {
               className="w-full flex items-center justify-center gap-2 mt-3 text-xs font-bold text-[#2F3E32] hover:text-[#5F6F52] bg-white border border-[#E8E4D9] p-2 rounded-lg transition-colors uppercase tracking-widest shadow-sm"
             >
               {isLinking ? 'Linking...' : 'Sync with Google'}
+            </button>
+          )}
+
+          {user && !user.isAnonymous ? (
+            <button
+              onClick={handleSignOut}
+              className="w-full flex items-center justify-center gap-2 mt-3 text-xs font-bold text-stone-500 hover:text-stone-700 bg-stone-100 hover:bg-stone-200 p-2 rounded-lg transition-colors uppercase tracking-widest"
+            >
+              <LogOut size={14} />
+              Sign Out
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                localStorage.removeItem('kairos_has_started');
+                setShowLanding(true);
+              }}
+              className="w-full flex items-center justify-center gap-2 mt-3 text-xs font-bold text-stone-500 hover:text-stone-700 bg-stone-100 hover:bg-stone-200 p-2 rounded-lg transition-colors uppercase tracking-widest"
+            >
+              <LogOut size={14} />
+              Back to Home
             </button>
           )}
 
@@ -1472,7 +1753,7 @@ export default function App() {
               </button>
             </div>
             <button 
-              onClick={() => setShowAddModal(true)}
+              onClick={() => { setEditingTask(null); setShowTaskModal(true); }}
               className="bg-[#2F3E32] text-[#F9F7F2] rounded-xl px-3 md:px-5 py-2 text-sm font-medium hover:bg-[#1A231C] transition-colors flex items-center gap-2 shadow-lg shadow-[#2F3E32]/10 font-serif"
             >
               <Plus size={16} />
@@ -1488,7 +1769,7 @@ export default function App() {
             {/* View: Today */}
             {viewMode === 'today' && (
               <div className="space-y-8 animate-in slide-in-from-bottom-4">
-                {/* Progress Bar CM Style */}
+                {/* Progress Bar */}
                 <div className="flex items-center gap-4 mb-8 bg-white p-4 rounded-2xl border border-[#E8E4D9] shadow-sm">
                     <div className="bg-[#F6F4EE] p-3 rounded-full">
                       <Clock size={24} className="text-[#A9B388]" />
@@ -1546,8 +1827,23 @@ export default function App() {
                           </h3>
                         </div>
 
-                        {task.status === 'completed' && (
+                        {task.status === 'completed' ? (
                            <span className="text-xs text-[#A9B388] font-bold tracking-widest uppercase px-2">Completed</span>
+                        ) : (
+                          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button 
+                              onClick={() => handleEditTask(task)}
+                              className="p-2 text-stone-400 hover:text-[#CB8F46] hover:bg-stone-50 rounded-full transition-colors"
+                            >
+                              <Edit size={16} />
+                            </button>
+                            <button 
+                              onClick={() => handleDeleteTask(task.id)}
+                              className="p-2 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
                         )}
                       </div>
                     ))}
@@ -1631,13 +1927,27 @@ export default function App() {
                           </div>
                           <h3 className="font-serif text-lg text-[#2F3E32]">{task.title}</h3>
                         </div>
-                        <button 
-                          onClick={() => moveFromBankToToday(task.id)}
-                          className="flex items-center gap-2 text-sm font-bold text-[#5F6F52] bg-[#F6F4EE] px-4 py-2 rounded-lg hover:bg-[#E8E4D9] transition-colors uppercase tracking-wide"
-                        >
-                          <span>Assign</span>
-                          <ChevronRight size={14} />
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button 
+                            onClick={() => handleEditTask(task)}
+                            className="p-2 text-stone-400 hover:text-[#CB8F46] hover:bg-stone-50 rounded-full transition-colors"
+                          >
+                            <Edit size={16} />
+                          </button>
+                          <button 
+                            onClick={() => handleDeleteTask(task.id)}
+                            className="p-2 text-stone-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                          <button 
+                            onClick={() => moveFromBankToToday(task.id)}
+                            className="flex items-center gap-2 text-sm font-bold text-[#5F6F52] bg-[#F6F4EE] px-4 py-2 rounded-lg hover:bg-[#E8E4D9] transition-colors uppercase tracking-wide ml-2"
+                          >
+                            <span>Assign</span>
+                            <ChevronRight size={14} />
+                          </button>
+                        </div>
                       </div>
                     ))
                   )}
@@ -1648,7 +1958,12 @@ export default function App() {
             {/* View: Calendar */}
             {viewMode === 'calendar' && (
               <div className="animate-in slide-in-from-bottom-4">
-                  <CalendarView tasks={getFilteredTasks(assignments)} activeStudentId={activeStudentId} />
+                  <CalendarView 
+                    tasks={getFilteredTasks(assignments)} 
+                    activeStudentId={activeStudentId}
+                    onEdit={handleEditTask}
+                    onDelete={handleDeleteTask}
+                  />
               </div>
             )}
 
@@ -1656,37 +1971,147 @@ export default function App() {
         </div>
 
         {/* Mobile Bottom Nav */}
-        <div className="md:hidden bg-white border-t border-[#E8E4D9] px-6 py-3 flex justify-between items-center z-20 pb-safe shadow-lg">
-           {students.map(s => {
+        <div className="md:hidden bg-white border-t border-[#E8E4D9] px-4 py-2 flex justify-around items-center z-20 pb-safe shadow-lg">
+           {students.slice(0, 3).map(s => {
               const colorClass = COLOR_OPTIONS.find(c => c.value === s.color)?.class || COLOR_OPTIONS[0].class;
               return (
-                <button 
+                <button
                   key={s.id}
                   onClick={() => setActiveStudentId(s.id)}
-                  className={`flex flex-col items-center gap-1 transition-all ${activeStudentId === s.id ? 'opacity-100 scale-110' : 'opacity-50'}`}
+                  className={`flex flex-col items-center gap-1 transition-all ${activeStudentId === s.id ? 'opacity-100' : 'opacity-50'}`}
                 >
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 ${activeStudentId === s.id ? `border-stone-400` : 'border-transparent'} ${colorClass}`}>
-                      <span className="text-xs font-bold font-serif">{s.display_name[0]}</span>
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center border-2 ${activeStudentId === s.id ? `border-[#5F6F52]` : 'border-transparent'} ${colorClass}`}>
+                      <span className="text-sm font-bold font-serif">{s.display_name[0]}</span>
                   </div>
                   <span className="text-[10px] font-medium text-stone-600 font-serif">{s.display_name}</span>
                 </button>
               );
            })}
-           <button onClick={() => setShowStudentModal(true)} className="flex flex-col items-center gap-1 opacity-50 hover:opacity-100">
-             <div className="w-8 h-8 rounded-full bg-[#E8E4D9] flex items-center justify-center">
-               <User size={16} className="text-stone-600" />
+           <button
+             onClick={() => setShowMobileMenu(true)}
+             className="flex flex-col items-center gap-1 opacity-70 hover:opacity-100"
+           >
+             <div className="w-10 h-10 rounded-full bg-[#F6F4EE] flex items-center justify-center border-2 border-transparent">
+               <Menu size={20} className="text-[#5F6F52]" />
              </div>
-             <span className="text-[10px] font-medium text-stone-600 font-serif">Manage</span>
+             <span className="text-[10px] font-medium text-stone-600 font-serif">More</span>
            </button>
         </div>
+
+        {/* Mobile Menu Overlay */}
+        {showMobileMenu && (
+          <div className="md:hidden fixed inset-0 z-50 flex flex-col justify-end">
+            <div
+              className="absolute inset-0 bg-[#2F3E32]/20 backdrop-blur-sm"
+              onClick={() => setShowMobileMenu(false)}
+            />
+            <div className="relative bg-[#FDFBF7] rounded-t-3xl border-t border-[#E8E4D9] p-6 pb-safe animate-in slide-in-from-bottom-10">
+              <div className="w-12 h-1 bg-[#E8E4D9] rounded-full mx-auto mb-6" />
+
+              <div className="grid grid-cols-4 gap-4 mb-6">
+                {students.map(s => {
+                  const colorClass = COLOR_OPTIONS.find(c => c.value === s.color)?.class || COLOR_OPTIONS[0].class;
+                  return (
+                    <button
+                      key={s.id}
+                      onClick={() => { setActiveStudentId(s.id); setShowMobileMenu(false); }}
+                      className={`flex flex-col items-center gap-2 p-3 rounded-xl transition-all ${activeStudentId === s.id ? 'bg-white shadow-sm border border-[#E8E4D9]' : ''}`}
+                    >
+                      <div className={`w-12 h-12 rounded-full flex items-center justify-center ${colorClass}`}>
+                        <span className="text-base font-bold font-serif">{s.display_name[0]}</span>
+                      </div>
+                      <span className="text-xs font-medium text-[#2F3E32] font-serif">{s.display_name}</span>
+                    </button>
+                  );
+                })}
+                <button
+                  onClick={() => { setShowStudentModal(true); setShowMobileMenu(false); }}
+                  className="flex flex-col items-center gap-2 p-3"
+                >
+                  <div className="w-12 h-12 rounded-full bg-[#E8E4D9] flex items-center justify-center border-2 border-dashed border-[#A9B388]">
+                    <Plus size={20} className="text-[#5F6F52]" />
+                  </div>
+                  <span className="text-xs font-medium text-stone-500 font-serif">Add</span>
+                </button>
+              </div>
+
+              <div className="border-t border-[#E8E4D9] pt-4 space-y-2">
+                <button
+                  onClick={() => { setShowRhythmsModal(true); setShowMobileMenu(false); }}
+                  className="w-full flex items-center gap-4 p-4 rounded-xl hover:bg-[#F6F4EE] transition-colors"
+                >
+                  <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center">
+                    <Coffee size={18} className="text-orange-600" />
+                  </div>
+                  <span className="font-serif text-[#2F3E32]">Manage Rhythms</span>
+                </button>
+
+                <button
+                  onClick={() => { setShowReportsModal(true); setShowMobileMenu(false); }}
+                  className="w-full flex items-center gap-4 p-4 rounded-xl hover:bg-[#F6F4EE] transition-colors"
+                >
+                  <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
+                    <Printer size={18} className="text-blue-600" />
+                  </div>
+                  <span className="font-serif text-[#2F3E32]">Print Portfolio</span>
+                </button>
+
+                <button
+                  onClick={() => { setShowImportModal(true); setShowMobileMenu(false); }}
+                  className="w-full flex items-center gap-4 p-4 rounded-xl hover:bg-[#F6F4EE] transition-colors"
+                >
+                  <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center">
+                    <Upload size={18} className="text-green-600" />
+                  </div>
+                  <span className="font-serif text-[#2F3E32]">Import Tasks (CSV)</span>
+                </button>
+              </div>
+
+              <div className="border-t border-[#E8E4D9] pt-4 mt-4 space-y-2">
+                {user && user.isAnonymous && (
+                  <button
+                    onClick={() => { handleGoogleSignIn(); setShowMobileMenu(false); }}
+                    disabled={isLinking}
+                    className="w-full flex items-center gap-4 p-4 rounded-xl bg-white border border-[#E8E4D9] shadow-sm"
+                  >
+                    <div className="w-10 h-10 rounded-full bg-[#F6F4EE] flex items-center justify-center">
+                      <User size={18} className="text-[#5F6F52]" />
+                    </div>
+                    <span className="font-serif text-[#2F3E32]">{isLinking ? 'Linking...' : 'Sync with Google'}</span>
+                  </button>
+                )}
+
+                <button
+                  onClick={() => {
+                    setShowMobileMenu(false);
+                    if (user && !user.isAnonymous) {
+                      handleSignOut();
+                    } else {
+                      localStorage.removeItem('kairos_has_started');
+                      setShowLanding(true);
+                    }
+                  }}
+                  className="w-full flex items-center gap-4 p-4 rounded-xl hover:bg-stone-100 transition-colors"
+                >
+                  <div className="w-10 h-10 rounded-full bg-stone-100 flex items-center justify-center">
+                    <LogOut size={18} className="text-stone-500" />
+                  </div>
+                  <span className="font-serif text-stone-500">{user && !user.isAnonymous ? 'Sign Out' : 'Back to Home'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
 
       {/* Modals */}
-      <AddTaskModal 
-        isOpen={showAddModal} 
-        onClose={() => setShowAddModal(false)} 
+      <TaskModal 
+        isOpen={showTaskModal} 
+        onClose={() => { setShowTaskModal(false); setEditingTask(null); }} 
         studentId={activeStudentId}
         onAdd={handleAddAssignment}
+        onEdit={handleUpdateTask}
+        taskToEdit={editingTask}
       />
       <SickDayModal 
         isOpen={showSickDayModal} 
@@ -1706,6 +2131,13 @@ export default function App() {
         userId={user?.uid}
         rhythms={rhythms}
         setRhythms={setRhythms}
+      />
+      <ReportsModal
+        isOpen={showReportsModal}
+        onClose={() => setShowReportsModal(false)}
+        students={students}
+        assignments={assignments}
+        activeStudentId={activeStudentId}
       />
       <ImportCSVModal
         isOpen={showImportModal}
